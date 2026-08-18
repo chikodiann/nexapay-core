@@ -1,2 +1,17 @@
 /Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/AccountServiceApplication.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/api/AccountController.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/api/dto/AccountResponse.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/api/dto/CreateAccountRequest.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/api/dto/UpdateAccountStatusRequest.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/application/AccountService.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/domain/Account.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/domain/AccountNumberGenerator.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/domain/AccountStatus.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/domain/Currency.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/infrastructure/AccountRepository.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/account/infrastructure/SecureRandomAccountNumberGenerator.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/common/exception/AccountNotFoundException.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/common/exception/DuplicateAccountException.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/common/exception/GlobalExceptionHandler.java
+/Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/common/exception/InvalidAccountStateException.java
 /Users/ann/Desktop/nexapay-core/services/account-service/src/main/java/com/nexapay/account/common/security/SecurityConfig.java
