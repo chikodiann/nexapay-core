@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nexapay_payment_db
+    username: nexapay
+    password: nexapay_secret
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  test:
+    database:
+      replace: NONE
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    clean-disabled: false
+
+services:
+  account-service:
+    base-url: http://localhost:8081
