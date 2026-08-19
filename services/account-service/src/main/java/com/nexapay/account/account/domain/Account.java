@@ -108,4 +108,37 @@ public class Account {
         this.status = newStatus;
         this.updatedAt = Instant.now();
     }
+
+    public void debit(BigDecimal amount) {
+    Objects.requireNonNull(amount, "Debit amount cannot be null");
+    if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+        throw new IllegalArgumentException("Debit amount must be strictly greater than zero");
+    }
+    if (this.status != AccountStatus.ACTIVE) {
+        throw new IllegalStateException("Cannot debit an account with status: " + this.status);
+    }
+    if (this.availableBalance.compareTo(amount) < 0) {
+        throw new com.nexapay.account.common.exception.InsufficientFundsException(
+                "Insufficient funds on account " + this.accountNumber + ". Available: " + this.availableBalance
+        );
+    }
+
+    this.availableBalance = this.availableBalance.subtract(amount);
+    this.ledgerBalance = this.ledgerBalance.subtract(amount);
+    this.updatedAt = Instant.now();
+}
+
+public void credit(BigDecimal amount) {
+    Objects.requireNonNull(amount, "Credit amount cannot be null");
+    if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+        throw new IllegalArgumentException("Credit amount must be strictly greater than zero");
+    }
+    if (this.status != AccountStatus.ACTIVE) {
+        throw new IllegalStateException("Cannot credit an account with status: " + this.status);
+    }
+
+    this.availableBalance = this.availableBalance.add(amount);
+    this.ledgerBalance = this.ledgerBalance.add(amount);
+    this.updatedAt = Instant.now();
+}
 }

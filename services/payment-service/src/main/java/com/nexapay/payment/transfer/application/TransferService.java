@@ -29,6 +29,7 @@ public class TransferService {
             throw new IllegalArgumentException("Idempotency-Key header is required");
         }
 
+        // 1. Idempotency Check
         var existing = transferRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             Transfer t = existing.get();
@@ -41,6 +42,7 @@ public class TransferService {
             throw new DuplicateIdempotencyKeyException("Idempotency key reused with different payload parameters");
         }
 
+        // 2. Validate Domain Preconditions
         if (request.sourceAccountNumber().equals(request.destinationAccountNumber())) {
             throw new InvalidTransferException("Source and destination accounts cannot be identical");
         }
@@ -48,9 +50,11 @@ public class TransferService {
             throw new InvalidTransferException("Only NGN currency is supported");
         }
 
+        // 3. Query Account-Service (HTTP Boundary)
         AccountDto source = accountServiceClient.getAccount(request.sourceAccountNumber());
         AccountDto destination = accountServiceClient.getAccount(request.destinationAccountNumber());
 
+        // 4. Validate Account States & Currencies
         if (!"ACTIVE".equalsIgnoreCase(source.status())) {
             throw new InactiveAccountException("Source account " + source.accountNumber() + " is " + source.status());
         }
@@ -64,6 +68,7 @@ public class TransferService {
             throw new InsufficientFundsException("Insufficient available balance on account " + source.accountNumber());
         }
 
+        // 5. Persist Transfer in PENDING State Before Balance Mutation
         Transfer transfer = Transfer.create(
                 idempotencyKey,
                 request.sourceAccountNumber(),
@@ -73,9 +78,26 @@ public class TransferService {
                 request.narration()
         );
 
-        Transfer saved = transferRepository.save(transfer);
+        Transfer saved = transferRepository.saveAndFlush(transfer);
         log.info("Persisted transfer reference={} status=PENDING", saved.getTransferReference());
 
-        return TransferResponse.fromDomain(saved);
+        // 6. Execute Balance Mutations
+        try {
+            saved.markProcessing();
+            transferRepository.saveAndFlush(saved);
+
+            accountServiceClient.debit(saved.getSourceAccountNumber(), saved.getAmount(), saved.getTransferReference());
+            accountServiceClient.credit(saved.getDestinationAccountNumber(), saved.getAmount(), saved.getTransferReference());
+
+            saved.markSuccessful();
+            Transfer completed = transferRepository.save(saved);
+            log.info("Transfer reference={} completed successfully", completed.getTransferReference());
+            return TransferResponse.fromDomain(completed);
+        } catch (Exception ex) {
+            log.error("Transfer execution failed for reference={}: {}", saved.getTransferReference(), ex.getMessage());
+            saved.markFailed(ex.getMessage());
+            Transfer failed = transferRepository.save(saved);
+            return TransferResponse.fromDomain(failed);
+        }
     }
 }

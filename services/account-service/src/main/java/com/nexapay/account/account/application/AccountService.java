@@ -1,6 +1,7 @@
 package com.nexapay.account.account.application;
 
 import com.nexapay.account.account.api.dto.AccountResponse;
+import com.nexapay.account.account.api.dto.BalanceMutationRequest;
 import com.nexapay.account.account.api.dto.CreateAccountRequest;
 import com.nexapay.account.account.api.dto.UpdateAccountStatusRequest;
 import com.nexapay.account.account.domain.Account;
@@ -83,4 +84,26 @@ public class AccountService {
         log.info("Updated account number={} status to {}", accountNumber, request.status());
         return AccountResponse.fromDomain(updated);
     }
+
+    @Transactional
+public AccountResponse debit(String accountNumber, BalanceMutationRequest request) {
+    Account account = accountRepository.findByAccountNumberForUpdate(accountNumber)
+            .orElseThrow(() -> new AccountNotFoundException("Account " + accountNumber + " not found"));
+
+    account.debit(request.amount());
+    Account updated = accountRepository.save(account);
+    log.info("Debited {} from account={} reference={}", request.amount(), accountNumber, request.reference());
+    return AccountResponse.fromDomain(updated);
+}
+
+@Transactional
+public AccountResponse credit(String accountNumber, BalanceMutationRequest request) {
+    Account account = accountRepository.findByAccountNumberForUpdate(accountNumber)
+            .orElseThrow(() -> new AccountNotFoundException("Account " + accountNumber + " not found"));
+
+    account.credit(request.amount());
+    Account updated = accountRepository.save(account);
+    log.info("Credited {} to account={} reference={}", request.amount(), accountNumber, request.reference());
+    return AccountResponse.fromDomain(updated);
+}
 }

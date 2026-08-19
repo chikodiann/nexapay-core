@@ -2,6 +2,9 @@ package com.nexapay.payment.transfer.infrastructure.client;
 
 import com.nexapay.payment.common.exception.AccountNotFoundException;
 import com.nexapay.payment.common.exception.ServiceUnavailableException;
+
+import java.math.BigDecimal;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
@@ -33,4 +36,26 @@ public class AccountServiceClient {
                 })
                 .body(AccountDto.class);
     }
+
+    public void debit(String accountNumber, BigDecimal amount, String reference) {
+    restClient.post()
+            .uri("/api/v1/accounts/{accountNumber}/debit", accountNumber)
+            .body(new BalanceMutationDto(amount, reference))
+            .retrieve()
+            .onStatus(HttpStatusCode::isError, (req, resp) -> {
+                throw new ServiceUnavailableException("Debit failed on account " + accountNumber + ": " + resp.getStatusCode());
+            })
+            .toBodilessEntity();
+}
+
+public void credit(String accountNumber, BigDecimal amount, String reference) {
+    restClient.post()
+            .uri("/api/v1/accounts/{accountNumber}/credit", accountNumber)
+            .body(new BalanceMutationDto(amount, reference))
+            .retrieve()
+            .onStatus(HttpStatusCode::isError, (req, resp) -> {
+                throw new ServiceUnavailableException("Credit failed on account " + accountNumber + ": " + resp.getStatusCode());
+            })
+            .toBodilessEntity();
+}
 }

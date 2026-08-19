@@ -65,4 +65,14 @@ public class GlobalExceptionHandler {
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }
-}
+
+    @ExceptionHandler(InsufficientFundsException.class)
+    public ProblemDetail handleInsufficientFunds(InsufficientFundsException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setTitle("Insufficient Funds");
+        problem.setType(URI.create("https://api.nexapay.com/errors/insufficient-funds"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+}           

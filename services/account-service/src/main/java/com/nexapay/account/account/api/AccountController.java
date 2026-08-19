@@ -1,6 +1,7 @@
 package com.nexapay.account.account.api;
 
 import com.nexapay.account.account.api.dto.AccountResponse;
+import com.nexapay.account.account.api.dto.BalanceMutationRequest;
 import com.nexapay.account.account.api.dto.CreateAccountRequest;
 import com.nexapay.account.account.api.dto.UpdateAccountStatusRequest;
 import com.nexapay.account.account.application.AccountService;
@@ -64,4 +65,23 @@ public class AccountController {
     ) {
         return ResponseEntity.ok(accountService.updateAccountStatus(accountNumber, request));
     }
+
+    @PostMapping("/accounts/{accountNumber}/debit")
+@Operation(summary = "Internal debit balance operation")
+public ResponseEntity<AccountResponse> debit(
+        @PathVariable String accountNumber,
+        @Valid @RequestBody BalanceMutationRequest request
+) {
+    return ResponseEntity.ok(accountService.debit(accountNumber, request));
+}
+
+@PostMapping("/accounts/{accountNumber}/credit")
+@Operation(summary = "Internal credit balance operation")
+public ResponseEntity<AccountResponse> credit(
+        @PathVariable String accountNumber,
+        @Valid @RequestBody BalanceMutationRequest request
+) {
+    return ResponseEntity.ok(accountService.credit(accountNumber, request));
+}
+
 }
