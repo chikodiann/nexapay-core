@@ -71,13 +71,11 @@ NexaPay currently follows a **database-per-service architecture**. Payment Servi
 
 ### Phase 2 — Payment Execution, Consistency & Concurrency 🚧
 
-* ✅ Synchronous payment initiation across service boundaries
+* ✅ Synchronous payment initiation over HTTP boundary
 * ✅ Transfer lifecycle persistence
 * ✅ Idempotency-key handling
-* ✅ Transfer lookup endpoint
-* ✅ Pessimistic account locking for balance mutation
-* [ ] Multi-threaded concurrent debit simulations
-* [ ] Race-condition and overspending verification
+* ✅ Transfer lookup endpoint(`GET /api/v1/transfers/{reference}`)
+* ✅ Pessimistic row-level locking (`PESSIMISTIC_WRITE`) for atomic ledger balance  mutations
 * [ ] Failure recovery analysis for partial transfer execution
 * [ ] Transactional outbox schema
 * [ ] Domain-event publishing contract
@@ -138,6 +136,7 @@ Important architectural decisions are documented as ADRs rather than being hidde
 * [ADR 0002: Dual-Balance Ledger Model](docs/adr/0002-two-balance-ledger-model.md)
 * [ADR 0003: Decoupled Account Number Generation](docs/adr/0003-account-number-generation-abstraction.md)
 * [ADR 0004: Database-Per-Service Isolation](docs/adr/0004-database-per-service-isolation.md)
+* [ADR 0005: Pessimistic Locking for Balance Mutations](docs/adr/0005-pessimistic-locking-for-balance-mutations.md)
 
 ---
 
