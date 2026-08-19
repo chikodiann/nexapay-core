@@ -1,155 +1,214 @@
-# NexaPay Core
 
-> A production-minded digital banking backend built with Java and Spring Boot, designed to demonstrate secure financial APIs, distributed systems, event-driven architecture, and cloud-native engineering practices.
+# NexaPay Core Platform
 
-> 🚧 **Active Development** — NexaPay Core is being built incrementally with production-oriented architecture, testing, security, observability, and deployment practices.
+[![Java](https://img.shields.io/badge/Java-21-orange)]()
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.3-brightgreen)]()
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)]()
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Overview
+A high-reliability, distributed core banking and transaction processing platform built with Java 21, Spring Boot 3, and domain-driven design principles.
 
-NexaPay Core is a fictional digital banking platform designed to model the engineering challenges behind modern financial systems.
+NexaPay is a portfolio engineering project focused on the problems that make financial systems difficult to build correctly: transaction consistency, concurrency, idempotency, service isolation, failure recovery, event-driven processing, observability, and secure API design.
 
-Rather than functioning as a simple CRUD application, the project focuses on backend concerns commonly encountered in production financial platforms, including:
-
-- Secure account management
-- RESTful API design
-- Financial transaction processing
-- Idempotent payment requests
-- Transaction consistency
-- Concurrent operations
-- Event-driven communication
-- Asynchronous processing
-- Authentication and authorization
-- Auditability
-- Failure handling and recovery
-- Observability
-- Automated testing
-- Containerized deployment
-
-All business rules, architecture, data models, and implementations in this repository are independently designed for this project.
-
-No proprietary code, architecture, documentation, or confidential information from any financial institution is used.
+> **Note:** NexaPay is an independently designed portfolio project. It contains no proprietary source code, API contracts, schemas, documentation, or confidential implementation details from any financial institution.
 
 ---
 
-## Technology Stack
+## Current Architecture
 
-### Backend
-- Java 21
-- Spring Boot 3
-- Spring Security
-- Spring Data JPA
-- Hibernate
-- Maven
+```mermaid
+graph TD
+    Client[API Client / Frontend] -->|HTTP REST| PaySvc[Payment Service :8082]
+    Client -->|HTTP REST| AccSvc[Account Service :8081]
 
-### Data
-- PostgreSQL
-- Redis *(planned)*
+    PaySvc -->|Synchronous Account Validation| AccSvc
 
-### Messaging
-- Apache Kafka *(planned)*
-- RabbitMQ *(planned)*
+    subgraph Storage Isolation
+        AccSvc --> AccDB[(PostgreSQL: nexapay_account_db)]
+        PaySvc --> PayDB[(PostgreSQL: nexapay_payment_db)]
+    end
+````
 
-### Testing
-- JUnit 5
-- Mockito
-- Testcontainers *(planned)*
-
-### Infrastructure
-- Docker
-- Docker Compose
-- Kubernetes *(planned)*
-- GitHub Actions CI/CD *(planned)*
-
-### Observability
-- Spring Boot Actuator *(planned)*
-- Micrometer *(planned)*
-- Prometheus *(planned)*
-- Grafana *(planned)*
+NexaPay currently follows a **database-per-service architecture**. Payment Service communicates with Account Service through an explicit HTTP boundary and does not access Account Service persistence directly.
 
 ---
 
-## Architecture
+## Current Implementation
 
-NexaPay Core is being developed incrementally.
+### 1. Account Service (`services/account-service`)
 
-The initial implementation focuses on two core services:
+* ✅ Feature-oriented clean package layout (`account/{api, application, domain, infrastructure}`)
+* ✅ PostgreSQL persistence with Flyway migrations (`V1__init_accounts_table.sql`)
+* ✅ Invariant-enforcing `Account` aggregate with dual-balance tracking (`availableBalance`, `ledgerBalance`)
+* ✅ Decoupled account number generation through `AccountNumberGenerator`
+* ✅ Row-level pessimistic locking (`PESSIMISTIC_WRITE`) for atomic balance debit and credit mutations
+* ✅ RESTful account management, lookup, status, debit, and credit operations
+* ✅ RFC 7807 `ProblemDetail` global error responses
+* ✅ Unit and PostgreSQL-backed integration tests
 
-### Account Service
+### 2. Payment Service (`services/payment-service`)
 
-Responsible for:
-
-- Customer accounts
-- Account balances
-- Account status
-- Balance validation
-- Account-level transaction controls
-
-### Payment Service
-
-Responsible for:
-
-- Transfer initiation
-- Payment validation
-- Idempotency
-- Transfer lifecycle management
-- Transaction processing
-
-Additional services and asynchronous infrastructure will be introduced as the system evolves.
+* ✅ Isolated PostgreSQL persistence and Flyway migration (`V1__init_transfers_table.sql`)
+* ✅ `Transfer` aggregate root with explicit lifecycle states (`PENDING`, `PROCESSING`, `SUCCESSFUL`, `FAILED`, `REVERSED`)
+* ✅ Synchronous `AccountServiceClient` over HTTP with strict database boundary isolation
+* ✅ Pre-mutation transfer persistence
+* ✅ Mandatory `Idempotency-Key` support
+* ✅ Transfer execution endpoint (`POST /api/v1/transfers`)
+* ✅ Transfer lookup endpoint (`GET /api/v1/transfers/{transferReference}`)
+* ✅ Unit and MockMvc integration tests covering idempotency replay, insufficient funds, unknown accounts, and currency validation
 
 ---
 
 ## Engineering Roadmap
 
-### Phase 1 — Core Banking APIs
-- [ ] Account Service
-- [ ] Payment Service
-- [ ] PostgreSQL persistence
-- [ ] REST API documentation
-- [ ] Authentication and authorization
-- [ ] Unit and integration testing
-- [ ] Dockerized local environment
+### Phase 1 — Foundations & Domain Modeling ✅
 
-### Phase 2 — Reliability & Transaction Safety
-- [ ] Idempotent payment processing
-- [ ] Concurrency protection
-- [ ] Optimistic locking
-- [ ] Redis
-- [ ] Global exception handling
-- [ ] Rate limiting
-- [ ] Structured logging
+* ✅ Multi-module Maven setup with Java 21 and Spring Boot 3
+* ✅ PostgreSQL containerization and Flyway migration baseline
+* ✅ Account aggregate and domain invariants
+* ✅ Database-per-service isolation
+* ✅ Integration testing against PostgreSQL from day one
 
-### Phase 3 — Event-Driven Architecture
-- [ ] Apache Kafka
-- [ ] Transaction events
-- [ ] RabbitMQ
-- [ ] Asynchronous notifications
-- [ ] Retry strategies
-- [ ] Dead-letter queues
+### Phase 2 — Payment Execution, Consistency & Concurrency 🚧
 
-### Phase 4 — Cloud-Native Infrastructure
-- [ ] Kubernetes
-- [ ] CI/CD pipeline
-- [ ] Health checks
-- [ ] Metrics
-- [ ] Prometheus
-- [ ] Grafana
+* ✅ Synchronous payment initiation across service boundaries
+* ✅ Transfer lifecycle persistence
+* ✅ Idempotency-key handling
+* ✅ Transfer lookup endpoint
+* ✅ Pessimistic account locking for balance mutation
+* [ ] Multi-threaded concurrent debit simulations
+* [ ] Race-condition and overspending verification
+* [ ] Failure recovery analysis for partial transfer execution
+* [ ] Transactional outbox schema
+* [ ] Domain-event publishing contract
 
-### Phase 5 — Production Engineering
-- [ ] Testcontainers
-- [ ] Performance testing
-- [ ] Failure scenario testing
-- [ ] Reconciliation
-- [ ] API versioning
-- [ ] Architecture Decision Records
-- [ ] Security hardening
+### Phase 3 — Event-Driven Processing & Messaging
+
+* [ ] Apache Kafka integration for durable domain events
+
+  * `TransferCompleted`
+  * `TransferFailed`
+* [ ] Transactional outbox relay
+* [ ] Idempotent event consumers
+* [ ] RabbitMQ integration for operational workflows
+
+  * Notifications
+  * Audit processing
+* [ ] Retry policies and dead-letter queues
+
+### Phase 4 — Cloud-Native Infrastructure & Observability
+
+* ✅ Spring Boot Actuator health and metrics endpoints
+* [ ] Multi-stage Docker images
+* [ ] Docker Compose full-platform environment
+* [ ] Prometheus metrics collection
+* [ ] Grafana dashboards
+* [ ] Structured application logging
+* [ ] Kubernetes Deployments and Services
+* [ ] Kubernetes ConfigMaps and Secrets
+* [ ] Readiness and liveness probes
+* [ ] GitHub Actions CI pipeline
+
+### Phase 5 — Customer Domain, Risk & Compliance
+
+* [ ] Customer profile management
+* [ ] KYC tiers
+* [ ] Account transaction limits
+* [ ] Transaction velocity controls
+* [ ] Risk/fraud event hooks
+* [ ] Audit trail enhancements
+
+### Phase 6 — Production Engineering
+
+* [ ] Testcontainers-based cross-service integration testing
+* [ ] Performance and load testing
+* [ ] Failure-injection scenarios
+* [ ] Reconciliation workflow
+* [ ] API versioning strategy
+* [ ] Security hardening
+* [ ] Architecture and operational documentation
 
 ---
 
-## Project Status
+## Architecture Decision Records
 
-🚧 **Currently under active development.**
+Important architectural decisions are documented as ADRs rather than being hidden inside implementation details.
 
-The project is being implemented incrementally, with architecture and engineering decisions documented as development progresses.
+* [ADR 0001: Feature-Oriented Package Structure](docs/adr/0001-feature-oriented-package-structure.md)
+* [ADR 0002: Dual-Balance Ledger Model](docs/adr/0002-two-balance-ledger-model.md)
+* [ADR 0003: Decoupled Account Number Generation](docs/adr/0003-account-number-generation-abstraction.md)
+* [ADR 0004: Database-Per-Service Isolation](docs/adr/0004-database-per-service-isolation.md)
+
+---
+
+## Technology Stack
+
+**Backend:** Java 21, Spring Boot 3, Spring Data JPA, Hibernate, Maven
+
+**Persistence:** PostgreSQL 16, Flyway
+
+**Security & API:** Spring Security, Bean Validation, RFC 7807 Problem Details, OpenAPI/Swagger
+
+**Testing:** JUnit 5, Mockito, MockMvc, Testcontainers
+
+**Messaging — Roadmap:** Apache Kafka, RabbitMQ
+
+**Infrastructure — Roadmap:** Docker, Kubernetes, GitHub Actions
+
+**Observability — Roadmap:** Spring Boot Actuator, Prometheus, Grafana
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+* Java 21
+* Maven 3.9+
+* Docker & Docker Compose
+
+### Running Locally
+
+```bash
+# Start infrastructure
+docker compose up -d
+
+# Run the test suites
+mvn clean test
+
+# Start Account Service
+mvn spring-boot:run -pl services/account-service
+
+# Start Payment Service
+mvn spring-boot:run -pl services/payment-service
+```
+
+Account Service:
+
+```text
+http://localhost:8081
+```
+
+Payment Service:
+
+```text
+http://localhost:8082
+```
+
+---
+
+## Engineering Principles
+
+NexaPay is being developed around several core principles:
+
+* **Service ownership:** each service owns its domain and persistence.
+* **Financial correctness over convenience:** balance mutation is controlled and concurrency-aware.
+* **Idempotency:** retrying a financial request must not create duplicate financial effects.
+* **Explicit failure handling:** distributed failures are treated as normal system behaviour.
+* **Testability:** domain behaviour and infrastructure boundaries are tested from the beginning.
+* **Observability:** production behaviour should be measurable rather than guessed.
+* **Security by design:** authentication, authorization, validation, and data protection are architectural concerns.
+* **No shared database shortcuts:** services communicate through explicit contracts.
 
 ---
 
