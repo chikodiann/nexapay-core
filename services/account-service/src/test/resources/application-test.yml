@@ -20,3 +20,6 @@ spring:
   test:
     database:
       replace: NONE
+  kafka:
+    listener:
+      auto-startup: false

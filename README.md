@@ -69,7 +69,7 @@ NexaPay currently follows a **database-per-service architecture**. Payment Servi
 * ✅ Database-per-service isolation
 * ✅ Integration testing against PostgreSQL from day one
 
-### Phase 2 — Payment Execution, Consistency & Concurrency 🚧
+### Phase 2 — Payment Execution, Consistency & Concurrency ✅
 
 * ✅ Synchronous payment initiation over HTTP boundary
 * ✅ Transfer lifecycle persistence
@@ -79,14 +79,14 @@ NexaPay currently follows a **database-per-service architecture**. Payment Servi
 * ✅ Partial transfer failure compensation and idempotent mutation tracking
 * ✅ Transactional outbox table schema and domain-event publishing contract (`TransferCompleted`, `TransferReversed`)
 
-### Phase 3 — Event-Driven Processing & Messaging
+### Phase 3 — Event-Driven Processing & Messaging 🚧
 
-* [ ] Apache Kafka integration for durable domain events
+* ✅ Apache Kafka integration for durable domain events
 
   * `TransferCompleted`
   * `TransferFailed`
-* [ ] Transactional outbox relay
-* [ ] Idempotent event consumers
+* ✅ Transactional outbox relay
+* ✅ Idempotent event consumers
 * [ ] RabbitMQ integration for operational workflows
 
   * Notifications
@@ -138,6 +138,7 @@ Important architectural decisions are documented as ADRs rather than being hidde
 * [ADR 0005: Pessimistic Locking for Balance Mutations](docs/adr/0005-pessimistic-locking-for-balance-mutations.md)
 * [ADR 0006: Compensating Transactions for Cross-Service Transfers](docs/adr/0006-compensating-transactions-for-cross-service-transfers.md)
 * [ADR 0007: Transactional Outbox for Domain Events](docs/adr/0007-transactional-outbox-for-domain-events.md)
+* [ADR 0008: Idempotent Consumer Deduplication](docs/adr/0008-idempotent-consumer-deduplication.md)
 
 ---
 

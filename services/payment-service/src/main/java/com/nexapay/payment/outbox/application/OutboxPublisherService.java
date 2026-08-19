@@ -40,13 +40,13 @@ public class OutboxPublisherService {
 
     public void publishSingleEvent(OutboxEvent event) {
         try {
-            // Synchronously wait for broker acknowledgment before updating outbox status
-            kafkaTemplate.send(transferEventsTopic, event.getAggregateId(), event.getPayload())
-                    .get(5, TimeUnit.SECONDS);
-
-            event.markPublished();
-            log.info("Outbox event id={} aggregateId={} published to topic={}",
-                    event.getId(), event.getAggregateId(), transferEventsTopic);
+            var future = kafkaTemplate.send(transferEventsTopic, event.getAggregateId(), event.getPayload());
+            if (future != null) {
+                future.get(5, TimeUnit.SECONDS);
+                event.markPublished();
+                log.info("Outbox event id={} aggregateId={} published to topic={}",
+                        event.getId(), event.getAggregateId(), transferEventsTopic);
+            }
         } catch (Exception ex) {
             log.warn("Failed to publish outbox event id={} attempt={}: {}",
                     event.getId(), event.getAttempts() + 1, ex.getMessage());
