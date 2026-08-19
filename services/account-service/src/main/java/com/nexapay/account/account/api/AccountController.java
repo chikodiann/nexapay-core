@@ -45,7 +45,7 @@ public class AccountController {
     @ApiResponse(responseCode = "200", description = "Account found")
     @ApiResponse(responseCode = "404", description = "Account not found")
     public ResponseEntity<AccountResponse> getByAccountNumber(@PathVariable String accountNumber) {
-        return ResponseEntity.ok(accountService.getByAccountNumber(accountNumber));
+        return ResponseEntity.ok(accountService.getAccountByNumber(accountNumber));
     }
 
     @GetMapping("/customers/{customerId}/accounts")

@@ -51,11 +51,23 @@ public class Transfer {
     @Column(name = "status", nullable = false, length = 20)
     private TransferStatus status;
 
+    @Column(name = "source_debited", nullable = false)
+    private boolean sourceDebited;
+
+    @Column(name = "destination_credited", nullable = false)
+    private boolean destinationCredited;
+
+    @Column(name = "compensation_completed", nullable = false)
+    private boolean compensationCompleted;
+
     @Column(name = "narration")
     private String narration;
 
     @Column(name = "failure_reason")
     private String failureReason;
+
+    @Column(name = "reversed_at")
+    private Instant reversedAt;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -87,6 +99,9 @@ public class Transfer {
         this.currency = Objects.requireNonNull(currency, "Currency must not be null");
         this.narration = narration;
         this.status = TransferStatus.PENDING;
+        this.sourceDebited = false;
+        this.destinationCredited = false;
+        this.compensationCompleted = false;
         this.createdAt = Objects.requireNonNull(now, "CreatedAt must not be null");
         this.updatedAt = now;
         this.version = 0L;
@@ -134,17 +149,60 @@ public class Transfer {
         this.updatedAt = Instant.now();
     }
 
+    public void markSourceDebited() {
+        if (this.status != TransferStatus.PROCESSING) {
+            throw new IllegalStateException("Cannot mark source debited unless PROCESSING");
+        }
+        this.sourceDebited = true;
+        this.updatedAt = Instant.now();
+    }
+
+    public void markDestinationCredited() {
+        if (this.status != TransferStatus.PROCESSING || !this.sourceDebited) {
+            throw new IllegalStateException("Cannot credit destination unless source was debited first");
+        }
+        this.destinationCredited = true;
+        this.updatedAt = Instant.now();
+    }
+
     public void markSuccessful() {
         if (this.status != TransferStatus.PROCESSING) {
-            throw new IllegalStateException("Cannot transition to SUCCESSFUL from status: " + this.status);
+            throw new IllegalStateException("Cannot mark successful unless PROCESSING");
+        }
+        if (!this.sourceDebited || !this.destinationCredited) {
+            throw new IllegalStateException("Cannot mark successful unless both debit and credit steps are completed");
         }
         this.status = TransferStatus.SUCCESSFUL;
         this.updatedAt = Instant.now();
     }
 
+    public void markCompensated() {
+        if (this.status != TransferStatus.PROCESSING) {
+            throw new IllegalStateException("Cannot mark compensated unless PROCESSING");
+        }
+        if (!this.sourceDebited) {
+            throw new IllegalStateException("Cannot compensate when source was never debited");
+        }
+        this.compensationCompleted = true;
+        this.updatedAt = Instant.now();
+    }
+
+    public void markReversed(String reason) {
+        if (this.status != TransferStatus.PROCESSING) {
+            throw new IllegalStateException("Cannot reverse unless PROCESSING");
+        }
+        if (!this.sourceDebited || !this.compensationCompleted) {
+            throw new IllegalStateException("Cannot reverse transfer without completed compensation");
+        }
+        this.status = TransferStatus.REVERSED;
+        this.failureReason = reason;
+        this.reversedAt = Instant.now();
+        this.updatedAt = this.reversedAt;
+    }
+
     public void markFailed(String reason) {
         if (this.status == TransferStatus.SUCCESSFUL || this.status == TransferStatus.REVERSED) {
-            throw new IllegalStateException("Cannot fail a transfer with terminal status: " + this.status);
+            throw new IllegalStateException("Cannot fail a transfer in terminal status: " + this.status);
         }
         this.status = TransferStatus.FAILED;
         this.failureReason = reason;

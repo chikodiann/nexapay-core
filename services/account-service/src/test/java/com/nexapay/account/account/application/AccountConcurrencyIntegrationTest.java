@@ -3,9 +3,10 @@ package com.nexapay.account.account.application;
 import com.nexapay.account.account.api.dto.BalanceMutationRequest;
 import com.nexapay.account.account.api.dto.CreateAccountRequest;
 import com.nexapay.account.account.domain.Account;
+import com.nexapay.account.account.domain.Currency;
+import com.nexapay.account.account.infrastructure.AccountMutationRepository;
 import com.nexapay.account.account.infrastructure.AccountRepository;
 import com.nexapay.account.common.exception.InsufficientFundsException;
-import com.nexapay.account.account.domain.Currency;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,8 +39,13 @@ class AccountConcurrencyIntegrationTest {
     @Autowired
     private AccountRepository accountRepository;
 
+    @Autowired
+    private AccountMutationRepository accountMutationRepository;
+
     @BeforeEach
     void setUp() {
+        // Delete child mutations first to avoid foreign key violations
+        accountMutationRepository.deleteAll();
         accountRepository.deleteAll();
     }
 
@@ -49,7 +55,7 @@ class AccountConcurrencyIntegrationTest {
         String accountNumber = response.accountNumber();
 
         if (initialBalance.compareTo(BigDecimal.ZERO) > 0) {
-            accountService.credit(accountNumber, new BalanceMutationRequest(initialBalance, "Initial funding"));
+            accountService.credit(accountNumber, new BalanceMutationRequest(initialBalance, "INIT_" + UUID.randomUUID()));
         }
         return accountNumber;
     }
@@ -57,7 +63,6 @@ class AccountConcurrencyIntegrationTest {
     @Test
     @DisplayName("1. Should prevent overspending under concurrent debits (5 succeed, 5 fail)")
     void shouldPreventOverspendingUnderConcurrentDebits() throws Exception {
-        // Given: Account funded with ₦100,000
         String accountNumber = createAccountWithBalance(new BigDecimal("100000.00"));
         int workers = 10;
         BigDecimal debitAmount = new BigDecimal("20000.00");
@@ -69,22 +74,24 @@ class AccountConcurrencyIntegrationTest {
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger insufficientFundsCount = new AtomicInteger(0);
 
-        Callable<Boolean> task = () -> {
-            ready.countDown();
-            start.await();
-            try {
-                accountService.debit(accountNumber, new BalanceMutationRequest(debitAmount, "Concurrent debit"));
-                successCount.incrementAndGet();
-                return true;
-            } catch (InsufficientFundsException ex) {
-                insufficientFundsCount.incrementAndGet();
-                return false;
-            }
-        };
+        List<Callable<Boolean>> tasks = new ArrayList<>();
+        for (int i = 0; i < workers; i++) {
+            String ref = "DEBIT_" + UUID.randomUUID();
+            tasks.add(() -> {
+                ready.countDown();
+                start.await();
+                try {
+                    accountService.debit(accountNumber, new BalanceMutationRequest(debitAmount, ref));
+                    successCount.incrementAndGet();
+                    return true;
+                } catch (InsufficientFundsException ex) {
+                    insufficientFundsCount.incrementAndGet();
+                    return false;
+                }
+            });
+        }
 
-        List<Future<Boolean>> futures = IntStream.range(0, workers)
-                .mapToObj(i -> executor.submit(task))
-                .toList();
+        List<Future<Boolean>> futures = tasks.stream().map(executor::submit).toList();
 
         ready.await();
         start.countDown();
@@ -94,7 +101,6 @@ class AccountConcurrencyIntegrationTest {
         }
         executor.shutdown();
 
-        // Then: Exactly 5 succeed and 5 fail with insufficient funds
         assertThat(successCount.get()).isEqualTo(5);
         assertThat(insufficientFundsCount.get()).isEqualTo(5);
 
@@ -106,7 +112,6 @@ class AccountConcurrencyIntegrationTest {
     @Test
     @DisplayName("2. Should process concurrent debits without lost updates (20 succeed)")
     void shouldProcessConcurrentDebitsWithoutLostUpdates() throws Exception {
-        // Given: Account funded with ₦1,000,000
         String accountNumber = createAccountWithBalance(new BigDecimal("1000000.00"));
         int workers = 20;
         BigDecimal debitAmount = new BigDecimal("10000.00");
@@ -115,16 +120,18 @@ class AccountConcurrencyIntegrationTest {
         CountDownLatch ready = new CountDownLatch(workers);
         CountDownLatch start = new CountDownLatch(1);
 
-        Callable<Boolean> task = () -> {
-            ready.countDown();
-            start.await();
-            accountService.debit(accountNumber, new BalanceMutationRequest(debitAmount, "Valid debit"));
-            return true;
-        };
+        List<Callable<Boolean>> tasks = new ArrayList<>();
+        for (int i = 0; i < workers; i++) {
+            String ref = "VALID_DEBIT_" + UUID.randomUUID();
+            tasks.add(() -> {
+                ready.countDown();
+                start.await();
+                accountService.debit(accountNumber, new BalanceMutationRequest(debitAmount, ref));
+                return true;
+            });
+        }
 
-        List<Future<Boolean>> futures = IntStream.range(0, workers)
-                .mapToObj(i -> executor.submit(task))
-                .toList();
+        List<Future<Boolean>> futures = tasks.stream().map(executor::submit).toList();
 
         ready.await();
         start.countDown();
@@ -135,7 +142,6 @@ class AccountConcurrencyIntegrationTest {
         executor.shutdown();
 
         Account finalAccount = accountRepository.findByAccountNumber(accountNumber).orElseThrow();
-        // 1,000,000 - (20 * 10,000) = 800,000
         assertThat(finalAccount.getAvailableBalance()).isEqualByComparingTo("800000.0000");
         assertThat(finalAccount.getLedgerBalance()).isEqualByComparingTo("800000.0000");
     }
@@ -143,7 +149,6 @@ class AccountConcurrencyIntegrationTest {
     @Test
     @DisplayName("3. Should process concurrent credits without lost updates (50 credits)")
     void shouldProcessConcurrentCreditsWithoutLostUpdates() throws Exception {
-        // Given: Account starting at ₦0
         String accountNumber = createAccountWithBalance(BigDecimal.ZERO);
         int workers = 50;
         BigDecimal creditAmount = new BigDecimal("1000.00");
@@ -152,16 +157,18 @@ class AccountConcurrencyIntegrationTest {
         CountDownLatch ready = new CountDownLatch(workers);
         CountDownLatch start = new CountDownLatch(1);
 
-        Callable<Boolean> task = () -> {
-            ready.countDown();
-            start.await();
-            accountService.credit(accountNumber, new BalanceMutationRequest(creditAmount, "Concurrent credit"));
-            return true;
-        };
+        List<Callable<Boolean>> tasks = new ArrayList<>();
+        for (int i = 0; i < workers; i++) {
+            String ref = "CONCURRENT_CREDIT_" + UUID.randomUUID();
+            tasks.add(() -> {
+                ready.countDown();
+                start.await();
+                accountService.credit(accountNumber, new BalanceMutationRequest(creditAmount, ref));
+                return true;
+            });
+        }
 
-        List<Future<Boolean>> futures = IntStream.range(0, workers)
-                .mapToObj(i -> executor.submit(task))
-                .toList();
+        List<Future<Boolean>> futures = tasks.stream().map(executor::submit).toList();
 
         ready.await();
         start.countDown();
@@ -172,7 +179,6 @@ class AccountConcurrencyIntegrationTest {
         executor.shutdown();
 
         Account finalAccount = accountRepository.findByAccountNumber(accountNumber).orElseThrow();
-        // 50 * 1,000 = 50,000
         assertThat(finalAccount.getAvailableBalance()).isEqualByComparingTo("50000.0000");
         assertThat(finalAccount.getLedgerBalance()).isEqualByComparingTo("50000.0000");
     }
@@ -180,7 +186,6 @@ class AccountConcurrencyIntegrationTest {
     @Test
     @DisplayName("4. Should maintain correct balance during interleaved concurrent credits and debits")
     void shouldMaintainCorrectBalanceDuringConcurrentCreditsAndDebits() throws Exception {
-        // Given: Account funded with ₦100,000
         String accountNumber = createAccountWithBalance(new BigDecimal("100000.00"));
         int operationsPerType = 10;
         int totalWorkers = operationsPerType * 2;
@@ -192,31 +197,29 @@ class AccountConcurrencyIntegrationTest {
 
         List<Callable<Boolean>> tasks = new ArrayList<>();
 
-        // 10 Debits
         for (int i = 0; i < operationsPerType; i++) {
+            String debitRef = "INTERLEAVED_DEBIT_" + UUID.randomUUID();
             tasks.add(() -> {
                 ready.countDown();
                 start.await();
-                accountService.debit(accountNumber, new BalanceMutationRequest(amount, "Interleaved debit"));
+                accountService.debit(accountNumber, new BalanceMutationRequest(amount, debitRef));
                 return true;
             });
         }
 
-        // 10 Credits
         for (int i = 0; i < operationsPerType; i++) {
+            String creditRef = "INTERLEAVED_CREDIT_" + UUID.randomUUID();
             tasks.add(() -> {
                 ready.countDown();
                 start.await();
-                accountService.credit(accountNumber, new BalanceMutationRequest(amount, "Interleaved credit"));
+                accountService.credit(accountNumber, new BalanceMutationRequest(amount, creditRef));
                 return true;
             });
         }
 
         Collections.shuffle(tasks);
 
-        List<Future<Boolean>> futures = tasks.stream()
-                .map(executor::submit)
-                .toList();
+        List<Future<Boolean>> futures = tasks.stream().map(executor::submit).toList();
 
         ready.await();
         start.countDown();
@@ -227,7 +230,6 @@ class AccountConcurrencyIntegrationTest {
         executor.shutdown();
 
         Account finalAccount = accountRepository.findByAccountNumber(accountNumber).orElseThrow();
-        // 100,000 - (10 * 5,000) + (10 * 5,000) = 100,000
         assertThat(finalAccount.getAvailableBalance()).isEqualByComparingTo("100000.0000");
         assertThat(finalAccount.getLedgerBalance()).isEqualByComparingTo("100000.0000");
     }

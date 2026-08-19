@@ -75,4 +75,12 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(AccountAlreadyExistsException.class)
+    public ProblemDetail handleAccountAlreadyExists(AccountAlreadyExistsException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Duplicate Account Conflict");
+        problem.setType(URI.create("https://api.nexapay.com/errors/account-conflict"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
 }           

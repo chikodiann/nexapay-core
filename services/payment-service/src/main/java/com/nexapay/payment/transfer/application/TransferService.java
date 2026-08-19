@@ -1,9 +1,13 @@
 package com.nexapay.payment.transfer.application;
 
+import com.nexapay.payment.common.exception.AccountMutationRejectedException;
+import com.nexapay.payment.common.exception.AccountNotFoundException;
+import com.nexapay.payment.common.exception.AccountServiceUnavailableException;
 import com.nexapay.payment.common.exception.DuplicateIdempotencyKeyException;
 import com.nexapay.payment.common.exception.InactiveAccountException;
 import com.nexapay.payment.common.exception.InsufficientFundsException;
 import com.nexapay.payment.common.exception.InvalidTransferException;
+import com.nexapay.payment.common.exception.TransferNotFoundException;
 import com.nexapay.payment.transfer.api.dto.InitiateTransferRequest;
 import com.nexapay.payment.transfer.api.dto.TransferResponse;
 import com.nexapay.payment.transfer.domain.Transfer;
@@ -36,13 +40,13 @@ public class TransferService {
             if (t.getSourceAccountNumber().equals(request.sourceAccountNumber())
                     && t.getDestinationAccountNumber().equals(request.destinationAccountNumber())
                     && t.getAmount().compareTo(request.amount()) == 0) {
-                log.info("Idempotent request returning existing transfer reference={}", t.getTransferReference());
+                log.info("Idempotent replay for transfer ref={}", t.getTransferReference());
                 return TransferResponse.fromDomain(t);
             }
             throw new DuplicateIdempotencyKeyException("Idempotency key reused with different payload parameters");
         }
 
-        // 2. Validate Domain Preconditions
+        // 2. Local Invariants Validation
         if (request.sourceAccountNumber().equals(request.destinationAccountNumber())) {
             throw new InvalidTransferException("Source and destination accounts cannot be identical");
         }
@@ -50,11 +54,10 @@ public class TransferService {
             throw new InvalidTransferException("Only NGN currency is supported");
         }
 
-        // 3. Query Account-Service (HTTP Boundary)
+        // 3. Pre-flight Verification over HTTP
         AccountDto source = accountServiceClient.getAccount(request.sourceAccountNumber());
         AccountDto destination = accountServiceClient.getAccount(request.destinationAccountNumber());
 
-        // 4. Validate Account States & Currencies
         if (!"ACTIVE".equalsIgnoreCase(source.status())) {
             throw new InactiveAccountException("Source account " + source.accountNumber() + " is " + source.status());
         }
@@ -68,7 +71,7 @@ public class TransferService {
             throw new InsufficientFundsException("Insufficient available balance on account " + source.accountNumber());
         }
 
-        // 5. Persist Transfer in PENDING State Before Balance Mutation
+        // 4. Persist PENDING Transfer
         Transfer transfer = Transfer.create(
                 idempotencyKey,
                 request.sourceAccountNumber(),
@@ -77,27 +80,64 @@ public class TransferService {
                 request.currency(),
                 request.narration()
         );
-
         Transfer saved = transferRepository.saveAndFlush(transfer);
-        log.info("Persisted transfer reference={} status=PENDING", saved.getTransferReference());
+        log.info("Persisted transfer ref={} status=PENDING", saved.getTransferReference());
 
-        // 6. Execute Balance Mutations
+        // 5. Execute Execution & Compensation Flow
+        return executeTransfer(saved);
+    }
+
+    private TransferResponse executeTransfer(Transfer transfer) {
+        String transferRef = transfer.getTransferReference();
+        transfer.markProcessing();
+        transferRepository.saveAndFlush(transfer);
+
+        // Step 1: Debit Source Account
         try {
-            saved.markProcessing();
-            transferRepository.saveAndFlush(saved);
-
-            accountServiceClient.debit(saved.getSourceAccountNumber(), saved.getAmount(), saved.getTransferReference());
-            accountServiceClient.credit(saved.getDestinationAccountNumber(), saved.getAmount(), saved.getTransferReference());
-
-            saved.markSuccessful();
-            Transfer completed = transferRepository.save(saved);
-            log.info("Transfer reference={} completed successfully", completed.getTransferReference());
-            return TransferResponse.fromDomain(completed);
+            accountServiceClient.debit(transfer.getSourceAccountNumber(), transfer.getAmount(), transferRef);
+            transfer.markSourceDebited();
+            transferRepository.saveAndFlush(transfer);
+            log.info("Source account debited for transfer ref={}", transferRef);
         } catch (Exception ex) {
-            log.error("Transfer execution failed for reference={}: {}", saved.getTransferReference(), ex.getMessage());
-            saved.markFailed(ex.getMessage());
-            Transfer failed = transferRepository.save(saved);
-            return TransferResponse.fromDomain(failed);
+            log.error("Source debit failed for transfer ref={}: {}", transferRef, ex.getMessage());
+            transfer.markFailed("SOURCE_DEBIT_FAILED: " + ex.getMessage());
+            return TransferResponse.fromDomain(transferRepository.save(transfer));
         }
+
+        // Step 2: Credit Destination Account
+        try {
+            accountServiceClient.credit(transfer.getDestinationAccountNumber(), transfer.getAmount(), transferRef);
+            transfer.markDestinationCredited();
+            transfer.markSuccessful();
+            log.info("Destination account credited, transfer ref={} marked SUCCESSFUL", transferRef);
+            return TransferResponse.fromDomain(transferRepository.save(transfer));
+        } catch (Exception creditFailure) {
+            log.warn("Destination credit failed for transfer ref={}. Initiating compensation: {}", transferRef, creditFailure.getMessage());
+            return compensate(transfer, creditFailure);
+        }
+    }
+
+    private TransferResponse compensate(Transfer transfer, Exception originalFailure) {
+        String reversalRef = transfer.getTransferReference() + ":REVERSAL";
+
+        try {
+            accountServiceClient.credit(transfer.getSourceAccountNumber(), transfer.getAmount(), reversalRef);
+            transfer.markCompensated();
+            transfer.markReversed("DESTINATION_CREDIT_FAILED: " + originalFailure.getMessage());
+            log.info("Compensation completed successfully for transfer ref={}", transfer.getTransferReference());
+            return TransferResponse.fromDomain(transferRepository.save(transfer));
+        } catch (Exception compensationFailure) {
+            log.error("CRITICAL: Compensation failed for transfer ref={}. Marked for reconciliation: {}",
+                    transfer.getTransferReference(), compensationFailure.getMessage());
+            transfer.markFailed("COMPENSATION_FAILED: " + compensationFailure.getMessage());
+            return TransferResponse.fromDomain(transferRepository.save(transfer));
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public TransferResponse getTransferByReference(String transferReference) {
+        Transfer transfer = transferRepository.findByTransferReference(transferReference)
+                .orElseThrow(() -> new TransferNotFoundException("Transfer with reference " + transferReference + " not found"));
+        return TransferResponse.fromDomain(transfer);
     }
 }

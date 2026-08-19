@@ -1,5 +1,6 @@
 package com.nexapay.account.account.domain;
 
+import com.nexapay.account.common.exception.InsufficientFundsException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -59,7 +60,6 @@ public class Account {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    // Private constructor enforcing domain invariants
     private Account(
             UUID id,
             String accountNumber,
@@ -81,22 +81,24 @@ public class Account {
     }
 
     /**
-     * Domain factory method for creating a brand new account starting at zero balance.
+     * Domain factory method accepting an AccountNumberGenerator (used in unit tests).
      */
-    public static Account create(
-            UUID customerId,
-            Currency currency,
-            AccountNumberGenerator generator
-    ) {
-        Objects.requireNonNull(generator, "AccountNumberGenerator must not be null");
-        Instant now = Instant.now();
+    public static Account create(UUID customerId, Currency currency, AccountNumberGenerator generator) {
+        Objects.requireNonNull(generator, "AccountNumberGenerator cannot be null");
+        return create(generator.generate(), customerId, currency);
+    }
+
+    /**
+     * Domain factory method accepting a resolved account number (used in application services).
+     */
+    public static Account create(String accountNumber, UUID customerId, Currency currency) {
         return new Account(
                 UUID.randomUUID(),
-                generator.generate(),
+                accountNumber,
                 customerId,
                 currency,
                 AccountStatus.ACTIVE,
-                now
+                Instant.now()
         );
     }
 
@@ -110,35 +112,35 @@ public class Account {
     }
 
     public void debit(BigDecimal amount) {
-    Objects.requireNonNull(amount, "Debit amount cannot be null");
-    if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-        throw new IllegalArgumentException("Debit amount must be strictly greater than zero");
-    }
-    if (this.status != AccountStatus.ACTIVE) {
-        throw new IllegalStateException("Cannot debit an account with status: " + this.status);
-    }
-    if (this.availableBalance.compareTo(amount) < 0) {
-        throw new com.nexapay.account.common.exception.InsufficientFundsException(
-                "Insufficient funds on account " + this.accountNumber + ". Available: " + this.availableBalance
-        );
+        Objects.requireNonNull(amount, "Debit amount cannot be null");
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Debit amount must be strictly greater than zero");
+        }
+        if (this.status != AccountStatus.ACTIVE) {
+            throw new IllegalStateException("Cannot debit an account with status: " + this.status);
+        }
+        if (this.availableBalance.compareTo(amount) < 0) {
+            throw new InsufficientFundsException(
+                    "Insufficient funds on account " + this.accountNumber + ". Available: " + this.availableBalance
+            );
+        }
+
+        this.availableBalance = this.availableBalance.subtract(amount);
+        this.ledgerBalance = this.ledgerBalance.subtract(amount);
+        this.updatedAt = Instant.now();
     }
 
-    this.availableBalance = this.availableBalance.subtract(amount);
-    this.ledgerBalance = this.ledgerBalance.subtract(amount);
-    this.updatedAt = Instant.now();
-}
+    public void credit(BigDecimal amount) {
+        Objects.requireNonNull(amount, "Credit amount cannot be null");
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Credit amount must be strictly greater than zero");
+        }
+        if (this.status != AccountStatus.ACTIVE) {
+            throw new IllegalStateException("Cannot credit an account with status: " + this.status);
+        }
 
-public void credit(BigDecimal amount) {
-    Objects.requireNonNull(amount, "Credit amount cannot be null");
-    if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-        throw new IllegalArgumentException("Credit amount must be strictly greater than zero");
+        this.availableBalance = this.availableBalance.add(amount);
+        this.ledgerBalance = this.ledgerBalance.add(amount);
+        this.updatedAt = Instant.now();
     }
-    if (this.status != AccountStatus.ACTIVE) {
-        throw new IllegalStateException("Cannot credit an account with status: " + this.status);
-    }
-
-    this.availableBalance = this.availableBalance.add(amount);
-    this.ledgerBalance = this.ledgerBalance.add(amount);
-    this.updatedAt = Instant.now();
-}
 }
