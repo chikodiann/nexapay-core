@@ -76,9 +76,8 @@ NexaPay currently follows a **database-per-service architecture**. Payment Servi
 * ✅ Idempotency-key handling
 * ✅ Transfer lookup endpoint(`GET /api/v1/transfers/{reference}`)
 * ✅ Pessimistic row-level locking (`PESSIMISTIC_WRITE`) for atomic ledger balance  mutations
-* [ ] Failure recovery analysis for partial transfer execution
-* [ ] Transactional outbox schema
-* [ ] Domain-event publishing contract
+* ✅ Partial transfer failure compensation and idempotent mutation tracking
+* ✅ Transactional outbox table schema and domain-event publishing contract (`TransferCompleted`, `TransferReversed`)
 
 ### Phase 3 — Event-Driven Processing & Messaging
 
@@ -137,6 +136,8 @@ Important architectural decisions are documented as ADRs rather than being hidde
 * [ADR 0003: Decoupled Account Number Generation](docs/adr/0003-account-number-generation-abstraction.md)
 * [ADR 0004: Database-Per-Service Isolation](docs/adr/0004-database-per-service-isolation.md)
 * [ADR 0005: Pessimistic Locking for Balance Mutations](docs/adr/0005-pessimistic-locking-for-balance-mutations.md)
+* [ADR 0006: Compensating Transactions for Cross-Service Transfers](docs/adr/0006-compensating-transactions-for-cross-service-transfers.md)
+* [ADR 0007: Transactional Outbox for Domain Events](docs/adr/0007-transactional-outbox-for-domain-events.md)
 
 ---
 

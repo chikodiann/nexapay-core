@@ -1,16 +1,19 @@
 package com.nexapay.payment.transfer.application;
 
-import com.nexapay.payment.common.exception.AccountMutationRejectedException;
-import com.nexapay.payment.common.exception.AccountNotFoundException;
-import com.nexapay.payment.common.exception.AccountServiceUnavailableException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexapay.payment.common.exception.DuplicateIdempotencyKeyException;
 import com.nexapay.payment.common.exception.InactiveAccountException;
 import com.nexapay.payment.common.exception.InsufficientFundsException;
 import com.nexapay.payment.common.exception.InvalidTransferException;
 import com.nexapay.payment.common.exception.TransferNotFoundException;
+import com.nexapay.payment.outbox.domain.OutboxEvent;
+import com.nexapay.payment.outbox.infrastructure.OutboxEventRepository;
 import com.nexapay.payment.transfer.api.dto.InitiateTransferRequest;
 import com.nexapay.payment.transfer.api.dto.TransferResponse;
 import com.nexapay.payment.transfer.domain.Transfer;
+import com.nexapay.payment.transfer.domain.event.TransferCompletedEvent;
+import com.nexapay.payment.transfer.domain.event.TransferReversedEvent;
 import com.nexapay.payment.transfer.infrastructure.TransferRepository;
 import com.nexapay.payment.transfer.infrastructure.client.AccountDto;
 import com.nexapay.payment.transfer.infrastructure.client.AccountServiceClient;
@@ -25,7 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class TransferService {
 
     private final TransferRepository transferRepository;
+    private final OutboxEventRepository outboxEventRepository;
     private final AccountServiceClient accountServiceClient;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public TransferResponse initiateTransfer(String idempotencyKey, InitiateTransferRequest request) {
@@ -83,7 +88,7 @@ public class TransferService {
         Transfer saved = transferRepository.saveAndFlush(transfer);
         log.info("Persisted transfer ref={} status=PENDING", saved.getTransferReference());
 
-        // 5. Execute Execution & Compensation Flow
+        // 5. Execution & Outbox Staging
         return executeTransfer(saved);
     }
 
@@ -109,8 +114,20 @@ public class TransferService {
             accountServiceClient.credit(transfer.getDestinationAccountNumber(), transfer.getAmount(), transferRef);
             transfer.markDestinationCredited();
             transfer.markSuccessful();
-            log.info("Destination account credited, transfer ref={} marked SUCCESSFUL", transferRef);
+
+            // Stage TransferCompleted Outbox Event in same local transaction
+            TransferCompletedEvent event = TransferCompletedEvent.from(
+                    transferRef,
+                    transfer.getSourceAccountNumber(),
+                    transfer.getDestinationAccountNumber(),
+                    transfer.getAmount(),
+                    transfer.getCurrency()
+            );
+            stageOutboxEvent("Transfer", transferRef, "TransferCompleted", event);
+
+            log.info("Destination credited, transfer ref={} marked SUCCESSFUL with outbox event", transferRef);
             return TransferResponse.fromDomain(transferRepository.save(transfer));
+
         } catch (Exception creditFailure) {
             log.warn("Destination credit failed for transfer ref={}. Initiating compensation: {}", transferRef, creditFailure.getMessage());
             return compensate(transfer, creditFailure);
@@ -124,13 +141,34 @@ public class TransferService {
             accountServiceClient.credit(transfer.getSourceAccountNumber(), transfer.getAmount(), reversalRef);
             transfer.markCompensated();
             transfer.markReversed("DESTINATION_CREDIT_FAILED: " + originalFailure.getMessage());
-            log.info("Compensation completed successfully for transfer ref={}", transfer.getTransferReference());
+
+            // Stage TransferReversed Outbox Event in same local transaction
+            TransferReversedEvent event = TransferReversedEvent.from(
+                    transfer.getTransferReference(),
+                    transfer.getSourceAccountNumber(),
+                    transfer.getAmount(),
+                    transfer.getCurrency(),
+                    "DESTINATION_CREDIT_FAILED: " + originalFailure.getMessage()
+            );
+            stageOutboxEvent("Transfer", transfer.getTransferReference(), "TransferReversed", event);
+
+            log.info("Compensation completed for transfer ref={} with outbox event staged", transfer.getTransferReference());
             return TransferResponse.fromDomain(transferRepository.save(transfer));
+
         } catch (Exception compensationFailure) {
             log.error("CRITICAL: Compensation failed for transfer ref={}. Marked for reconciliation: {}",
                     transfer.getTransferReference(), compensationFailure.getMessage());
             transfer.markFailed("COMPENSATION_FAILED: " + compensationFailure.getMessage());
             return TransferResponse.fromDomain(transferRepository.save(transfer));
+        }
+    }
+
+    private void stageOutboxEvent(String aggregateType, String aggregateId, String eventType, Object eventPayload) {
+        try {
+            String jsonPayload = objectMapper.writeValueAsString(eventPayload);
+            outboxEventRepository.save(OutboxEvent.pending(aggregateType, aggregateId, eventType, jsonPayload));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize outbox event payload", e);
         }
     }
 

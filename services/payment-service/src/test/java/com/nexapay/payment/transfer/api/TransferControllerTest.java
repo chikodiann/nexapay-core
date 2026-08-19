@@ -1,8 +1,10 @@
 package com.nexapay.payment.transfer.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nexapay.payment.common.exception.AccountNotFoundException;
 import com.nexapay.payment.common.exception.AccountServiceUnavailableException;
+import com.nexapay.payment.outbox.domain.OutboxEvent;
+import com.nexapay.payment.outbox.domain.OutboxStatus;
+import com.nexapay.payment.outbox.infrastructure.OutboxEventRepository;
 import com.nexapay.payment.transfer.api.dto.InitiateTransferRequest;
 import com.nexapay.payment.transfer.infrastructure.TransferRepository;
 import com.nexapay.payment.transfer.infrastructure.client.AccountDto;
@@ -15,12 +17,15 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -29,6 +34,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,14 +53,21 @@ class TransferControllerTest {
     @Autowired
     private TransferRepository transferRepository;
 
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
     @MockBean
     private AccountServiceClient accountServiceClient;
+
+    @MockBean
+    private KafkaTemplate<String, String> kafkaTemplate;
 
     private final String src = "1023847291";
     private final String dst = "1045678932";
 
     @BeforeEach
     void setUp() {
+        outboxEventRepository.deleteAll();
         transferRepository.deleteAll();
     }
 
@@ -86,6 +99,14 @@ class TransferControllerTest {
 
         verify(accountServiceClient, times(1)).debit(eq(src), any(), anyString());
         verify(accountServiceClient, times(1)).credit(eq(dst), any(), anyString());
+
+        // Verify outbox event creation for successful transfer
+        List<OutboxEvent> events = outboxEventRepository.findAll();
+        assertThat(events).hasSize(1);
+        OutboxEvent event = events.get(0);
+        assertThat(event.getEventType()).isEqualTo("TransferCompleted");
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(event.getPayload()).contains("TransferCompleted");
     }
 
     @Test
@@ -107,6 +128,7 @@ class TransferControllerTest {
 
         verify(accountServiceClient, times(1)).debit(eq(src), any(), anyString());
         verify(accountServiceClient, times(0)).credit(anyString(), any(), anyString());
+        assertThat(outboxEventRepository.findAll()).isEmpty();
     }
 
     @Test
@@ -131,6 +153,14 @@ class TransferControllerTest {
         verify(accountServiceClient, times(1)).debit(eq(src), any(), anyString());
         verify(accountServiceClient, times(1)).credit(eq(dst), any(), anyString());
         verify(accountServiceClient, times(1)).credit(eq(src), any(), org.mockito.ArgumentMatchers.contains(":REVERSAL"));
+
+        // Verify outbox event creation for reversed transfer
+        List<OutboxEvent> events = outboxEventRepository.findAll();
+        assertThat(events).hasSize(1);
+        OutboxEvent event = events.get(0);
+        assertThat(event.getEventType()).isEqualTo("TransferReversed");
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(event.getPayload()).contains("DESTINATION_CREDIT_FAILED");
     }
 
     @Test
@@ -211,8 +241,33 @@ class TransferControllerTest {
                 .andExpect(jsonPath("$.status").value("REVERSED"));
 
         var transfer = transferRepository.findByIdempotencyKey("idemp-006").orElseThrow();
-        org.assertj.core.api.Assertions.assertThat(transfer.isSourceDebited()).isTrue();
-        org.assertj.core.api.Assertions.assertThat(transfer.isDestinationCredited()).isFalse();
-        org.assertj.core.api.Assertions.assertThat(transfer.isCompensationCompleted()).isTrue();
+        assertThat(transfer.isSourceDebited()).isTrue();
+        assertThat(transfer.isDestinationCredited()).isFalse();
+        assertThat(transfer.isCompensationCompleted()).isTrue();
+    }
+
+    @Test
+    @DisplayName("7. shouldRetrieveTransferByReference")
+    void shouldRetrieveTransferByReference() throws Exception {
+        mockActiveAccounts();
+        doNothing().when(accountServiceClient).debit(anyString(), any(), anyString());
+        doNothing().when(accountServiceClient).credit(anyString(), any(), anyString());
+
+        InitiateTransferRequest request = new InitiateTransferRequest(src, dst, new BigDecimal("7500.00"), "NGN", "Lookup test");
+
+        String responseJson = mockMvc.perform(post("/api/v1/transfers")
+                        .header("Idempotency-Key", "idemp-007")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        String ref = objectMapper.readTree(responseJson).get("transferReference").asText();
+
+        mockMvc.perform(get("/api/v1/transfers/" + ref))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transferReference").value(ref))
+                .andExpect(jsonPath("$.status").value("SUCCESSFUL"))
+                .andExpect(jsonPath("$.amount").value(7500.00));
     }
 }
