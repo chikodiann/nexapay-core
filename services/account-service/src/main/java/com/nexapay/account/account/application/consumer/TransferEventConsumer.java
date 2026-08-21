@@ -32,37 +32,37 @@ public class TransferEventConsumer {
     @Transactional
     public void handleTransferEvent(
             @Payload String rawJson,
-            @Header(KafkaHeaders.RECEIVED_KEY) String messageKey
+            @Header(value = KafkaHeaders.RECEIVED_KEY, required = false) String messageKey
     ) {
+        TransferEventPayload payload;
         try {
-            TransferEventPayload payload = objectMapper.readValue(rawJson, TransferEventPayload.class);
-
-            // 1. Idempotency Check: Drop duplicate deliveries
-            if (consumedMessageRepository.existsByConsumerNameAndEventId(CONSUMER_NAME, payload.eventId())) {
-                log.info("IDEMPOTENT_CONSUMER_DROP: Duplicate eventId={} ref={} on consumer={}",
-                        payload.eventId(), payload.transferReference(), CONSUMER_NAME);
-                return;
-            }
-
-            // 2. Business Execution
-            notificationService.dispatchTransferNotification(payload);
-
-            // 3. Mark Consumed in Deduplication Store (atomic with transaction)
-            consumedMessageRepository.save(
-                    ConsumedMessage.record(
-                            CONSUMER_NAME,
-                            payload.eventId(),
-                            payload.eventType(),
-                            messageKey != null ? messageKey : payload.transferReference()
-                    )
-            );
-
-            log.info("CONSUMER_PROCESSED: Successfully processed eventId={} ref={}",
-                    payload.eventId(), payload.transferReference());
-
+            payload = objectMapper.readValue(rawJson, TransferEventPayload.class);
         } catch (Exception ex) {
-            log.error("CONSUMER_ERROR: Failed to process transfer event payload: {}", rawJson, ex);
-            throw new RuntimeException("Consumer processing failed", ex);
+            log.error("POISON_PILL_ERROR: Unparseable payload encountered: {}", rawJson, ex);
+            throw new IllegalArgumentException("Malformed payload cannot be processed", ex);
         }
+
+        // 1. Idempotency Check: Drop duplicate deliveries
+        if (consumedMessageRepository.existsByConsumerNameAndEventId(CONSUMER_NAME, payload.eventId())) {
+            log.info("IDEMPOTENT_CONSUMER_DROP: Duplicate eventId={} ref={} on consumer={}",
+                    payload.eventId(), payload.transferReference(), CONSUMER_NAME);
+            return;
+        }
+
+        // 2. Business Execution (May throw transient or non-transient exceptions)
+        notificationService.dispatchTransferNotification(payload);
+
+        // 3. Mark Consumed in Deduplication Store ONLY after successful processing
+        consumedMessageRepository.save(
+                ConsumedMessage.record(
+                        CONSUMER_NAME,
+                        payload.eventId(),
+                        payload.eventType(),
+                        messageKey != null ? messageKey : payload.transferReference()
+                )
+        );
+
+        log.info("CONSUMER_PROCESSED: Successfully processed eventId={} ref={}",
+                payload.eventId(), payload.transferReference());
     }
 }
