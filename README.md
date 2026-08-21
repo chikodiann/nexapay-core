@@ -85,13 +85,14 @@ NexaPay currently follows a **database-per-service architecture**. Payment Servi
 
   * `TransferCompleted`
   * `TransferFailed`
-* ✅ Transactional outbox relay
-* ✅ Idempotent event consumers
-* [ ] RabbitMQ integration for operational workflows
+* ✅ Transactional outbox relay worker with retry thresholds
+* ✅ Idempotent event consumers with relational deduplication store (`consumed_messages`)
+* ✅ Kafka consumer retry policies and Dead-Letter Topic (`nexapay.transfer.events.DLT`)
+* ✅ RabbitMQ integration for operational workflows
 
-  * Notifications
-  * Audit processing
-* [ ] Retry policies and dead-letter queues
+  * Exchange & queue topologies (`nexapay.notifications.exchange`)
+  * Dead-Letter Exchange (`nexapay.notifications.dlx`) & DLQ routing
+* [ ] End-to-end multi-service test suite against real Kafka & RabbitMQ brokers via Testcontainers
 
 ### Phase 4 — Cloud-Native Infrastructure & Observability
 
@@ -139,6 +140,8 @@ Important architectural decisions are documented as ADRs rather than being hidde
 * [ADR 0006: Compensating Transactions for Cross-Service Transfers](docs/adr/0006-compensating-transactions-for-cross-service-transfers.md)
 * [ADR 0007: Transactional Outbox for Domain Events](docs/adr/0007-transactional-outbox-for-domain-events.md)
 * [ADR 0008: Idempotent Consumer Deduplication](docs/adr/0008-idempotent-consumer-deduplication.md)
+* [ADR 0009: Idempotent Message Consumption](docs/adr/0009-idempotent-message-consumption.md)
+* [ADR 0010: Idempotent Message Consumption](docs/adr/0010-idempotent-message-consumption.md)
 
 ---
 

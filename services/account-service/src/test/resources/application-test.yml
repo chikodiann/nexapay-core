@@ -23,3 +23,7 @@ spring:
   kafka:
     listener:
       auto-startup: false
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
