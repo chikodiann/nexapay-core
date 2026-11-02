@@ -29,9 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
-@ActiveProfiles("test")
-class AccountConcurrencyIntegrationTest {
+import com.nexapay.account.AbstractIntegrationTest;
+
+class AccountConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private AccountService accountService;
@@ -42,9 +42,13 @@ class AccountConcurrencyIntegrationTest {
     @Autowired
     private AccountMutationRepository accountMutationRepository;
 
+    @Autowired
+    private com.nexapay.account.account.infrastructure.LedgerMutationRepository ledgerMutationRepository;
+
     @BeforeEach
     void setUp() {
         // Delete child mutations first to avoid foreign key violations
+        ledgerMutationRepository.deleteAll();
         accountMutationRepository.deleteAll();
         accountRepository.deleteAll();
     }

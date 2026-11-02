@@ -24,9 +24,9 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-@SpringBootTest
-@ActiveProfiles("test")
-class TransferEventConsumerTest {
+import com.nexapay.account.AbstractIntegrationTest;
+
+class TransferEventConsumerTest extends AbstractIntegrationTest {
 
     @Autowired
     private TransferEventConsumer transferEventConsumer;

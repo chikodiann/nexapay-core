@@ -75,13 +75,22 @@ public ResponseEntity<AccountResponse> debit(
     return ResponseEntity.ok(accountService.debit(accountNumber, request));
 }
 
-@PostMapping("/accounts/{accountNumber}/credit")
-@Operation(summary = "Internal credit balance operation")
-public ResponseEntity<AccountResponse> credit(
-        @PathVariable String accountNumber,
-        @Valid @RequestBody BalanceMutationRequest request
-) {
-    return ResponseEntity.ok(accountService.credit(accountNumber, request));
-}
+    @PostMapping("/accounts/{accountNumber}/credit")
+    @Operation(summary = "Internal credit balance operation")
+    public ResponseEntity<AccountResponse> credit(
+            @PathVariable String accountNumber,
+            @Valid @RequestBody BalanceMutationRequest request
+    ) {
+        return ResponseEntity.ok(accountService.credit(accountNumber, request));
+    }
 
+    @GetMapping("/accounts/mutations/{reference}")
+    @Operation(summary = "Lookup ledger mutation status", description = "Returns status and details for a given transfer reference")
+    @ApiResponse(responseCode = "200", description = "Mutation found")
+    @ApiResponse(responseCode = "404", description = "Mutation not found")
+    public ResponseEntity<com.nexapay.account.account.api.dto.LedgerMutationResponse> getMutationByReference(
+            @PathVariable String reference
+    ) {
+        return ResponseEntity.ok(accountService.getMutationByReference(reference));
+    }
 }
