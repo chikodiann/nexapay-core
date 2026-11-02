@@ -21,9 +21,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest
-@ActiveProfiles("test")
-class OutboxPublisherTest {
+import com.nexapay.payment.AbstractIntegrationTest;
+
+class OutboxPublisherTest extends AbstractIntegrationTest {
 
     @Autowired
     private OutboxPublisherService outboxPublisherService;

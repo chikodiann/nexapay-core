@@ -48,7 +48,7 @@ public class Transfer {
     private String currency;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", nullable = false, length = 35)
     private TransferStatus status;
 
     @Column(name = "source_debited", nullable = false)
@@ -150,25 +150,35 @@ public class Transfer {
     }
 
     public void markSourceDebited() {
-        if (this.status != TransferStatus.PROCESSING) {
-            throw new IllegalStateException("Cannot mark source debited unless PROCESSING");
-        }
         this.sourceDebited = true;
+        this.status = TransferStatus.DEBIT_COMPLETED;
+        this.updatedAt = Instant.now();
+    }
+
+    public void markCreditPending() {
+        this.status = TransferStatus.CREDIT_PENDING;
         this.updatedAt = Instant.now();
     }
 
     public void markDestinationCredited() {
-        if (this.status != TransferStatus.PROCESSING || !this.sourceDebited) {
-            throw new IllegalStateException("Cannot credit destination unless source was debited first");
-        }
         this.destinationCredited = true;
+        this.status = TransferStatus.CREDIT_COMPLETED;
+        this.updatedAt = Instant.now();
+    }
+
+    public void markUnknownTimeout(String reason) {
+        this.status = TransferStatus.UNKNOWN_TIMEOUT;
+        this.failureReason = reason;
+        this.updatedAt = Instant.now();
+    }
+
+    public void markReconciliationRequired(String reason) {
+        this.status = TransferStatus.RECONCILIATION_REQUIRED;
+        this.failureReason = reason;
         this.updatedAt = Instant.now();
     }
 
     public void markSuccessful() {
-        if (this.status != TransferStatus.PROCESSING) {
-            throw new IllegalStateException("Cannot mark successful unless PROCESSING");
-        }
         if (!this.sourceDebited || !this.destinationCredited) {
             throw new IllegalStateException("Cannot mark successful unless both debit and credit steps are completed");
         }
@@ -177,9 +187,6 @@ public class Transfer {
     }
 
     public void markCompensated() {
-        if (this.status != TransferStatus.PROCESSING) {
-            throw new IllegalStateException("Cannot mark compensated unless PROCESSING");
-        }
         if (!this.sourceDebited) {
             throw new IllegalStateException("Cannot compensate when source was never debited");
         }
@@ -188,9 +195,6 @@ public class Transfer {
     }
 
     public void markReversed(String reason) {
-        if (this.status != TransferStatus.PROCESSING) {
-            throw new IllegalStateException("Cannot reverse unless PROCESSING");
-        }
         if (!this.sourceDebited || !this.compensationCompleted) {
             throw new IllegalStateException("Cannot reverse transfer without completed compensation");
         }

@@ -1,0 +1,1 @@
+ALTER TABLE transfers ALTER COLUMN status TYPE VARCHAR(35);

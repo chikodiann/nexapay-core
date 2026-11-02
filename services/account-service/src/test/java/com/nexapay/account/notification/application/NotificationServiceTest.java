@@ -20,9 +20,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-@SpringBootTest
-@ActiveProfiles("test")
-class NotificationServiceTest {
+import com.nexapay.account.AbstractIntegrationTest;
+
+class NotificationServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     private NotificationService notificationService;

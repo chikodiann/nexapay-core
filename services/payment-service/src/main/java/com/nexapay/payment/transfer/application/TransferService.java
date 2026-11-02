@@ -2,6 +2,7 @@ package com.nexapay.payment.transfer.application;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexapay.payment.common.exception.AccountServiceUnavailableException;
 import com.nexapay.payment.common.exception.DuplicateIdempotencyKeyException;
 import com.nexapay.payment.common.exception.InactiveAccountException;
 import com.nexapay.payment.common.exception.InsufficientFundsException;
@@ -17,10 +18,13 @@ import com.nexapay.payment.transfer.domain.event.TransferReversedEvent;
 import com.nexapay.payment.transfer.infrastructure.TransferRepository;
 import com.nexapay.payment.transfer.infrastructure.client.AccountDto;
 import com.nexapay.payment.transfer.infrastructure.client.AccountServiceClient;
+import com.nexapay.payment.transfer.infrastructure.client.LedgerMutationDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -103,6 +107,31 @@ public class TransferService {
             transfer.markSourceDebited();
             transferRepository.saveAndFlush(transfer);
             log.info("Source account debited for transfer ref={}", transferRef);
+
+        } catch (AccountServiceUnavailableException ex) {
+            log.warn("Network timeout/unavailable during debit for transfer ref={}. Querying mutation status...", transferRef);
+            try {
+                Optional<LedgerMutationDto> mutationOpt = accountServiceClient.getMutationStatus(transferRef);
+                if (mutationOpt.isPresent() && "APPLIED".equalsIgnoreCase(mutationOpt.get().status())) {
+                    log.info("Recovered debit state: Mutation confirmed APPLIED for transfer ref={}", transferRef);
+                    transfer.markSourceDebited();
+                    transferRepository.saveAndFlush(transfer);
+                } else if (mutationOpt.isPresent() && "FAILED".equalsIgnoreCase(mutationOpt.get().status())) {
+                    log.info("Debit confirmed FAILED for transfer ref={}", transferRef);
+                    transfer.markFailed("SOURCE_DEBIT_FAILED: Mutation explicitly FAILED");
+                    return TransferResponse.fromDomain(transferRepository.save(transfer));
+                } else {
+                    log.warn("Debit mutation NOT_FOUND for transfer ref={}. Marking FAILED", transferRef);
+                    transfer.markFailed("SOURCE_DEBIT_FAILED: Mutation not found after timeout");
+                    return TransferResponse.fromDomain(transferRepository.save(transfer));
+                }
+            } catch (Exception lookupEx) {
+                log.error("Mutation lookup failed during debit recovery for ref={}: {}", transferRef, lookupEx.getMessage());
+                transfer.markUnknownTimeout("DEBIT_TIMEOUT: " + ex.getMessage());
+                transfer.markReconciliationRequired("DEBIT_AMBIGUOUS_RECONCILIATION_REQUIRED: " + lookupEx.getMessage());
+                return TransferResponse.fromDomain(transferRepository.save(transfer));
+            }
+
         } catch (Exception ex) {
             log.error("Source debit failed for transfer ref={}: {}", transferRef, ex.getMessage());
             transfer.markFailed("SOURCE_DEBIT_FAILED: " + ex.getMessage());
@@ -111,6 +140,7 @@ public class TransferService {
 
         // Step 2: Credit Destination Account
         try {
+            transfer.markCreditPending();
             accountServiceClient.credit(transfer.getDestinationAccountNumber(), transfer.getAmount(), transferRef);
             transfer.markDestinationCredited();
             transfer.markSuccessful();
@@ -127,6 +157,39 @@ public class TransferService {
 
             log.info("Destination credited, transfer ref={} marked SUCCESSFUL with outbox event", transferRef);
             return TransferResponse.fromDomain(transferRepository.save(transfer));
+
+        } catch (AccountServiceUnavailableException creditTimeoutEx) {
+            log.warn("Network timeout during credit for transfer ref={}. Querying mutation status...", transferRef);
+            try {
+                Optional<LedgerMutationDto> mutationOpt = accountServiceClient.getMutationStatus(transferRef);
+                if (mutationOpt.isPresent() && "APPLIED".equalsIgnoreCase(mutationOpt.get().status())
+                        && "CREDIT".equalsIgnoreCase(mutationOpt.get().operationType())) {
+                    log.info("Recovered credit state: Mutation confirmed APPLIED for transfer ref={}", transferRef);
+                    transfer.markDestinationCredited();
+                    transfer.markSuccessful();
+
+                    TransferCompletedEvent event = TransferCompletedEvent.from(
+                            transferRef,
+                            transfer.getSourceAccountNumber(),
+                            transfer.getDestinationAccountNumber(),
+                            transfer.getAmount(),
+                            transfer.getCurrency()
+                    );
+                    stageOutboxEvent("Transfer", transferRef, "TransferCompleted", event);
+                    return TransferResponse.fromDomain(transferRepository.save(transfer));
+                } else if (mutationOpt.isPresent() && "FAILED".equalsIgnoreCase(mutationOpt.get().status())) {
+                    log.warn("Credit confirmed FAILED for transfer ref={}. Initiating compensation...", transferRef);
+                    return compensate(transfer, creditTimeoutEx);
+                } else {
+                    log.warn("Credit mutation NOT_FOUND for transfer ref={}. Initiating compensation...", transferRef);
+                    return compensate(transfer, creditTimeoutEx);
+                }
+            } catch (Exception lookupEx) {
+                log.error("Mutation lookup failed during credit recovery for ref={}: {}", transferRef, lookupEx.getMessage());
+                transfer.markUnknownTimeout("CREDIT_TIMEOUT: " + creditTimeoutEx.getMessage());
+                transfer.markReconciliationRequired("CREDIT_AMBIGUOUS_RECONCILIATION_REQUIRED: " + lookupEx.getMessage());
+                return TransferResponse.fromDomain(transferRepository.save(transfer));
+            }
 
         } catch (Exception creditFailure) {
             log.warn("Destination credit failed for transfer ref={}. Initiating compensation: {}", transferRef, creditFailure.getMessage());
@@ -158,7 +221,7 @@ public class TransferService {
         } catch (Exception compensationFailure) {
             log.error("CRITICAL: Compensation failed for transfer ref={}. Marked for reconciliation: {}",
                     transfer.getTransferReference(), compensationFailure.getMessage());
-            transfer.markFailed("COMPENSATION_FAILED: " + compensationFailure.getMessage());
+            transfer.markReconciliationRequired("COMPENSATION_FAILED: " + compensationFailure.getMessage());
             return TransferResponse.fromDomain(transferRepository.save(transfer));
         }
     }

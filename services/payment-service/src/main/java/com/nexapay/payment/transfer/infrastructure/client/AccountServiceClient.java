@@ -3,14 +3,18 @@ package com.nexapay.payment.transfer.infrastructure.client;
 import com.nexapay.payment.common.exception.AccountMutationRejectedException;
 import com.nexapay.payment.common.exception.AccountNotFoundException;
 import com.nexapay.payment.common.exception.AccountServiceUnavailableException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 
+@Slf4j
 @Component
 public class AccountServiceClient {
 
@@ -22,7 +26,7 @@ public class AccountServiceClient {
     ) {
         this.restClient = restClientBuilder
                 .baseUrl(accountServiceUrl)
-                .build();
+        .build();
     }
 
     public AccountDto getAccount(String accountNumber) {
@@ -75,6 +79,28 @@ public class AccountServiceClient {
                     .toBodilessEntity();
         } catch (ResourceAccessException ex) {
             throw new AccountServiceUnavailableException("Account service network failure during credit: " + ex.getMessage());
+        }
+    }
+
+    public Optional<LedgerMutationDto> getMutationStatus(String reference) {
+        try {
+            LedgerMutationDto dto = restClient.get()
+                    .uri("/api/v1/accounts/mutations/{reference}", reference)
+                    .retrieve()
+                    .onStatus(status -> status.value() == 404, (req, resp) -> {
+                        throw new HttpClientErrorException(org.springframework.http.HttpStatus.NOT_FOUND, "Mutation not found");
+                    })
+                    .onStatus(HttpStatusCode::isError, (req, resp) -> {
+                        throw new AccountServiceUnavailableException("Mutation lookup error: " + resp.getStatusCode());
+                    })
+                    .body(LedgerMutationDto.class);
+            return Optional.ofNullable(dto);
+        } catch (HttpClientErrorException.NotFound ex) {
+            return Optional.empty();
+        } catch (AccountServiceUnavailableException | ResourceAccessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new AccountServiceUnavailableException("Mutation lookup failed: " + ex.getMessage());
         }
     }
 }

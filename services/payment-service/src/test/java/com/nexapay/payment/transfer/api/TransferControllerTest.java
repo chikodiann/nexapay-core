@@ -23,6 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,10 +40,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+import com.nexapay.payment.AbstractIntegrationTest;
+
 @AutoConfigureMockMvc(addFilters = false)
-@ActiveProfiles("test")
-class TransferControllerTest {
+class TransferControllerTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -269,5 +270,93 @@ class TransferControllerTest {
                 .andExpect(jsonPath("$.transferReference").value(ref))
                 .andExpect(jsonPath("$.status").value("SUCCESSFUL"))
                 .andExpect(jsonPath("$.amount").value(7500.00));
+    }
+
+    @Test
+    @DisplayName("8. shouldRecoverDebitAndCompleteTransferWhenDebitTimesOutButMutationStatusIsApplied")
+    void shouldRecoverDebitAndCompleteTransferWhenDebitTimesOutButMutationStatusIsApplied() throws Exception {
+        mockActiveAccounts();
+        doThrow(new AccountServiceUnavailableException("Debit socket timeout"))
+                .when(accountServiceClient).debit(eq(src), any(), anyString());
+        when(accountServiceClient.getMutationStatus(anyString()))
+                .thenAnswer(inv -> Optional.of(new com.nexapay.payment.transfer.infrastructure.client.LedgerMutationDto(
+                        UUID.randomUUID(), inv.getArgument(0), "DEBIT", UUID.randomUUID(), new BigDecimal("10000.00"), "APPLIED", java.time.Instant.now()
+                )));
+        doNothing().when(accountServiceClient).credit(eq(dst), any(), anyString());
+
+        InitiateTransferRequest request = new InitiateTransferRequest(src, dst, new BigDecimal("10000.00"), "NGN", "Debit recovery test");
+
+        mockMvc.perform(post("/api/v1/transfers")
+                        .header("Idempotency-Key", "idemp-008")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESSFUL"));
+
+        verify(accountServiceClient, times(1)).getMutationStatus(anyString());
+        verify(accountServiceClient, times(1)).credit(eq(dst), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("9. shouldFailTransferWhenDebitTimesOutAndMutationStatusIsNotFound")
+    void shouldFailTransferWhenDebitTimesOutAndMutationStatusIsNotFound() throws Exception {
+        mockActiveAccounts();
+        doThrow(new AccountServiceUnavailableException("Debit socket timeout"))
+                .when(accountServiceClient).debit(eq(src), any(), anyString());
+        when(accountServiceClient.getMutationStatus(anyString())).thenReturn(Optional.empty());
+
+        InitiateTransferRequest request = new InitiateTransferRequest(src, dst, new BigDecimal("5000.00"), "NGN", "Debit timeout not found test");
+
+        mockMvc.perform(post("/api/v1/transfers")
+                        .header("Idempotency-Key", "idemp-009")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("FAILED"));
+
+        verify(accountServiceClient, times(0)).credit(anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("10. shouldTransitionToReconciliationRequiredWhenDebitTimesOutAndMutationLookupTimesOut")
+    void shouldTransitionToReconciliationRequiredWhenDebitTimesOutAndMutationLookupTimesOut() throws Exception {
+        mockActiveAccounts();
+        doThrow(new AccountServiceUnavailableException("Debit socket timeout"))
+                .when(accountServiceClient).debit(eq(src), any(), anyString());
+        when(accountServiceClient.getMutationStatus(anyString()))
+                .thenThrow(new AccountServiceUnavailableException("Mutation lookup timeout"));
+
+        InitiateTransferRequest request = new InitiateTransferRequest(src, dst, new BigDecimal("7000.00"), "NGN", "Ambiguous debit timeout test");
+
+        mockMvc.perform(post("/api/v1/transfers")
+                        .header("Idempotency-Key", "idemp-010")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("RECONCILIATION_REQUIRED"));
+    }
+
+    @Test
+    @DisplayName("11. shouldRecoverCreditAndCompleteTransferWhenCreditTimesOutButMutationStatusIsApplied")
+    void shouldRecoverCreditAndCompleteTransferWhenCreditTimesOutButMutationStatusIsApplied() throws Exception {
+        mockActiveAccounts();
+        doNothing().when(accountServiceClient).debit(eq(src), any(), anyString());
+        doThrow(new AccountServiceUnavailableException("Credit socket timeout"))
+                .when(accountServiceClient).credit(eq(dst), any(), anyString());
+        when(accountServiceClient.getMutationStatus(anyString()))
+                .thenAnswer(inv -> Optional.of(new com.nexapay.payment.transfer.infrastructure.client.LedgerMutationDto(
+                        UUID.randomUUID(), inv.getArgument(0), "CREDIT", UUID.randomUUID(), new BigDecimal("12000.00"), "APPLIED", java.time.Instant.now()
+                )));
+
+        InitiateTransferRequest request = new InitiateTransferRequest(src, dst, new BigDecimal("12000.00"), "NGN", "Credit recovery test");
+
+        mockMvc.perform(post("/api/v1/transfers")
+                        .header("Idempotency-Key", "idemp-011")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("SUCCESSFUL"));
+
+        verify(accountServiceClient, times(1)).getMutationStatus(anyString());
     }
 }

@@ -24,6 +24,15 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(LedgerMutationNotFoundException.class)
+    public ProblemDetail handleLedgerMutationNotFound(LedgerMutationNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("Ledger Mutation Not Found");
+        problem.setType(URI.create("https://api.nexapay.com/errors/ledger-mutation-not-found"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     @ExceptionHandler(DuplicateAccountException.class)
     public ProblemDetail handleDuplicateAccount(DuplicateAccountException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());

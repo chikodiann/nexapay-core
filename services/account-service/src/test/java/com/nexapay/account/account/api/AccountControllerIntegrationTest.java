@@ -22,10 +22,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+import com.nexapay.account.AbstractIntegrationTest;
+
 @AutoConfigureMockMvc(addFilters = false) // Bypass security filters for API contract integration tests
-@ActiveProfiles("test")
-class AccountControllerIntegrationTest {
+class AccountControllerIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -101,5 +101,53 @@ class AccountControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(updateRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FROZEN"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/accounts/mutations/{reference} - Should return mutation details after debit")
+    void shouldReturnMutationDetailsAfterDebit() throws Exception {
+        UUID customerId = UUID.randomUUID();
+        CreateAccountRequest createReq = new CreateAccountRequest(customerId, Currency.NGN);
+
+        String createResp = mockMvc.perform(post("/api/v1/accounts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        String accNum = objectMapper.readTree(createResp).get("accountNumber").asText();
+
+        // Credit initial balance first
+        mockMvc.perform(post("/api/v1/accounts/" + accNum + "/credit")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new com.nexapay.account.account.api.dto.BalanceMutationRequest(
+                                new java.math.BigDecimal("100000.00"), "INIT_REF_100"
+                        ))))
+                .andExpect(status().isOk());
+
+        // Perform debit with reference
+        String ref = "TXF_MUTATION_TEST_1";
+        mockMvc.perform(post("/api/v1/accounts/" + accNum + "/debit")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new com.nexapay.account.account.api.dto.BalanceMutationRequest(
+                                new java.math.BigDecimal("25000.00"), ref
+                        ))))
+                .andExpect(status().isOk());
+
+        // Query mutation status endpoint
+        mockMvc.perform(get("/api/v1/accounts/mutations/" + ref))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transferReference").value(ref))
+                .andExpect(jsonPath("$.operationType").value("DEBIT"))
+                .andExpect(jsonPath("$.status").value("APPLIED"))
+                .andExpect(jsonPath("$.amount").value(25000.00));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/accounts/mutations/{reference} - Should return 404 for unknown mutation reference")
+    void shouldReturn404ForUnknownMutationReference() throws Exception {
+        mockMvc.perform(get("/api/v1/accounts/mutations/TXF_NON_EXISTENT_REF"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.title").value("Ledger Mutation Not Found"));
     }
 }
